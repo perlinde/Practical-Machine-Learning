@@ -1,0 +1,136 @@
+---
+title: "Practical Machine Learning - Course project"
+author: "Per Linde"
+date: "4 oktober 2017"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE)
+```
+
+```{r loadPackages, results="hide"}
+library(tidyverse)
+library(lubridate)
+library(caret)
+
+```
+
+
+### Introduction
+This is my course project for the Coursera class "Practical Machine Learning" by Johns Hopkins University. The goal of the exercise is to predict the manner in which exercise was performed. There are five different manners in which the exercise could be performed, labeled as A, B, C, D, E. The data for the project come from [this](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) source.
+
+### Data cleansing
+First I will read the data. The code here assumes that the data is already downloaded and in the working directory of the project. The training data file will be read into the variable "training" whereas the final 20 observations that will be predicted in the end are put in the variable "validation", as I will later split the training data into a training and a testing set.
+```{r readData}
+training <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+
+validation <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+After reading in the data I call the dim command to get a sense of how big the data is. 
+```{r dimensions}
+dim(training)
+```
+So we have over 19600 observations and 160 variables, including the variable we are trying to predict. Now let´s use the str function to see what the data looks like.
+```{r str}
+str(training)
+```
+  
+  There seems to be several columns that mainly contain NAs. Let´s identify all columns that have more than 19000 NAs and remove them from the training data set.
+```{r removeCols}
+nas <- apply(training, 2, function(x) sum(is.na(x)))
+naCols <- names(nas[nas > 19000])
+naColIndex <- which(colnames(training) %in% naCols)
+training <- training[, -naColIndex]
+apply(training, 2, function(x) sum(is.na(x)))
+```
+  
+  The remaining variables are actually free from NAs. Now before fitting any models, let´s remove a few timestamp columns that will not be used in the prediction.
+```{r}
+training <- training[, -c(1, 3, 4, 5)]
+```
+  
+  Now let´s look at the dimensions of the data once again.
+```{r}
+dim(training)
+```
+### Model
+ Let´s start modelling. First I´ll randomly split the data in the training variable into a training and a test set, where the test set will be used to estimate the out of sample test error. 70% of the data in the training variable will be used as training data, and the remaining 30% as test data. Note that the variable training from now on will continue only the training data, and that the test data will be in the testing variable.   
+
+### Model
+```{r partition}
+set.seed(1337)
+trainIndex <- createDataPartition(training$classe, p=0.7, list=FALSE)
+trainTrain <- training[trainIndex, ]
+testing <- training[-trainIndex, ]
+training <- trainTrain
+rm(trainTrain)
+
+```
+  
+  Before fitting the models I´ll set up the cross validation that will be used when fitting all models. Here, 10-fold cross validation will be used, repeated once.
+
+```{r crossValidation}
+cv <- trainControl(method = "repeatedcv",
+                           number = 10, repeats=1)
+```
+  
+  Now let´s start modelling. I´ll be fitting three separate models on the training data that will be evaluated on the test data, and the best model out of the three will then be used to predict the 20 observations in the validation set.    
+  
+  The models I´ll be fititng are the Naive Bayes classifier, Random forest and Gradient Boosting. Let´s start with the Naive Bayes classifier.
+```{r fitNb, results="hide"}
+nbFit <- train(classe ~ ., data=training, method='nb',trControl=cv)
+
+```
+
+```{r nbModel}
+
+nbPrediction <- predict(nbFit, testing, type="raw")
+confusionMatrix(nbPrediction, testing$classe)
+```
+
+ When applied on the test set, the accuracy for the Naive Bayes model was just over 76% and the Kappa just below 70%.  
+  Now let´s fit the Random forest.
+
+```{r fitRf, results="hide"}
+rfFit <- train(classe ~., data=training, method="rf", trControl=cv, prox=TRUE)
+
+```
+
+```{r rf}
+rfPrediction <- predict(rfFit, testing, type="raw")
+confusionMatrix(rfPrediction, testing$classe)
+
+plot(rfFit)
+```
+  
+ The random forest yields a much higher accuracy of 99.75% and a Kappa of 0.9968. A 95% confidence interval of the accuracy is given by (0.9958, 0.9986).  
+ Let´s try the final model using gbm. 
+
+```{r fitGbm, results="hide"}
+gbmFit <- train(classe ~., data=training, method="gbm", trControl=cv, verbose=FALSE)
+
+```
+
+```{r gbm}
+gbmPrediction <- predict(gbmFit, testing, type="raw")
+confusionMatrix(gbmPrediction, testing$classe)
+
+plot(gbmFit, ylim=c(0.9, 1))
+```
+  
+  The gbm model is also very accurate, getting 98.78% of the predictions in the test sample correct. However, it is slightly less accurate than the random forest model. Hence, the random forest model will be used in the final predictions. The expected out of sample error rate is 1 - 0.9975 = 0.0025.
+  
+## Predicting on validation set
+The last part of the task is to use the best model to generate predictions on the 20 observations in the validation data set. The code below cleans the valiation data to include only the same variables as the training and test data, and then performs the prediction.
+```{r prediction}
+vars <- colnames(training)
+varIndex <- which(colnames(validation) %in% vars)
+validation <- validation[, varIndex]
+
+valPred <- predict(rfFit, validation, type="raw")
+valPred
+```
+
+
+
